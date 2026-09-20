@@ -42,8 +42,8 @@ body { overflow-x: hidden; }
 }
 .scrim-bottom {
   bottom: 0;
-  height: 12vh;
-  background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 45%, rgba(0,0,0,0) 100%);
+  height: 24vh;
+  background: linear-gradient(to top, rgba(0,0,0,0.94) 0%, rgba(0,0,0,0.7) 40%, rgba(0,0,0,0) 100%);
 }
 
 /* ---------- header ---------- */

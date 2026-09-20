@@ -174,6 +174,16 @@ function tile(pDev, color) {
   return t;
 }
 
+/* clip to a rounded rectangle; r = 0 means no clip */
+function roundClip(c, w, h, r) {
+  if (r <= 0) return false;
+  c.save();
+  c.beginPath();
+  c.roundRect(0, 0, w, h, Math.min(r, w / 2, h / 2));
+  c.clip();
+  return true;
+}
+
 /* the first n dots of a grid `cols` wide: full rows plus a partial last row */
 function fillShape(c, n, cols, p, style, alpha) {
   const full = Math.floor(n / cols), rem = n - full * cols;
@@ -187,11 +197,11 @@ function fillShape(c, n, cols, p, style, alpha) {
 let W = 0, H = 0, dpr = 1, dbgLock = false, dbgScreens = 0;
 const field = { cy: 0, h: 0, w: 0 };
 function measureField() {
-  const top = els.hud.getBoundingClientRect().bottom + H * 0.025;
-  const bottom = H - Math.max(H * 0.09, 56) - 72;
+  const top = els.hud.getBoundingClientRect().bottom + H * 0.015;
+  const bottom = H - H * 0.1;                                    // the caption floats over the bottom edge
   field.cy = (top + bottom) / 2;
-  field.h = Math.max(80, (bottom - top) * 0.96);
-  field.w = Math.min(W * 0.84, field.h * 2.4);                  // never a thin wide strip
+  field.h = Math.max(80, bottom - top);
+  field.w = Math.min(W * 0.88, field.h * 2.6);                   // never a thin wide strip
 }
 
 function render(N, acc) {
@@ -200,7 +210,7 @@ function render(N, acc) {
   ctx.fillRect(0, 0, W, H);
 
   const A = field.w / field.h;                                   // field aspect
-  const pMax = 0.15 * Math.min(W, H);                            // a single dot never grows past this
+  const pMax = 0.18 * Math.min(W, H);                            // a single dot never grows past this
   let p = Math.min(Math.sqrt(field.w * field.h / N), pMax);      // cell pitch in css px
   const flat = p * dpr < FLAT_AT;
   let tw = null, ta = null;
@@ -214,6 +224,13 @@ function render(N, acc) {
   const ch = Math.max(1, Math.sqrt(N / A)) * p;
   ctx.translate(W / 2 - cw / 2, field.cy - ch / 2);
 
+  // once dots are too small to read as balls the field is a slab: round its corners
+  const rows = Math.ceil(N / cols);
+  const soft = clamp((3 - p * dpr) / 2, 0, 1);
+  const shapeW = Math.min(N, cols) * p, shapeH = rows * p;
+  const r = soft * 0.06 * Math.min(shapeW, shapeH);
+  const clipped = roundClip(ctx, shapeW, shapeH, r);
+
   if (flat) {
     const lift = 1 + 0.45 * clamp((FLAT_AT - p * dpr) / 1.0, 0, 1); // far-away fields get a little brighter
     const a = Math.min(1, COVER * lift);
@@ -223,12 +240,16 @@ function render(N, acc) {
       ctx.globalCompositeOperation = 'destination-out';
       fillShape(ctx, acc, ac, p, '#000', 1);
       ctx.globalCompositeOperation = 'source-over';
+      const ar = Math.min(r * 0.5, 0.2 * Math.min(Math.min(ac, acc), Math.ceil(acc / ac)) * p);
+      const c2 = roundClip(ctx, Math.min(acc, ac) * p, Math.ceil(acc / ac) * p, ar);
       fillShape(ctx, acc, ac, p, accentCol, a);
+      if (c2) ctx.restore();
     }
   } else {
     fillShape(ctx, N, cols, p, tw.pattern, 1);
     if (acc > 0) fillShape(ctx, acc, Math.max(1, Math.ceil(Math.sqrt(acc * A))), p, ta.pattern, 1);
   }
+  if (clipped) ctx.restore();
 }
 
 
