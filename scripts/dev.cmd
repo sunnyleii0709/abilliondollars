@@ -1,3 +1,3 @@
 @echo off
-cd /d C:/Users/sunny/Projects/abilliondollars
-npx --yes serve -l 8140 --no-clipboard .
+cd /d "%~dp0.."
+call npx.cmd --yes serve -l 8140 --no-clipboard .

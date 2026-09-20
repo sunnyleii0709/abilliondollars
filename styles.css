@@ -37,12 +37,12 @@ body { overflow-x: hidden; }
 }
 .scrim-top {
   top: 0;
-  height: 30vh;
+  height: 26vh;
   background: linear-gradient(to bottom, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 45%, rgba(0,0,0,0) 100%);
 }
 .scrim-bottom {
   bottom: 0;
-  height: 24vh;
+  height: 12vh;
   background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.5) 45%, rgba(0,0,0,0) 100%);
 }
 
@@ -102,7 +102,7 @@ body { overflow-x: hidden; }
 /* ---------- HUD ---------- */
 .hud {
   position: fixed;
-  top: 13vh;
+  top: 10vh;
   left: 0;
   right: 0;
   z-index: 10;

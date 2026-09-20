@@ -19,8 +19,8 @@ const MARKS = ['1', '1K', '1M', '1B', '1T'];
 const WHITE = '#f2f2f5';
 
 /* timeline, in screen heights */
-const PL = 1.15;            // how long each milestone holds
-const RL = 2.7;             // how long each zoom-out takes
+const PL = 1.3;             // how long each milestone holds
+const RL = 3.8;             // how long each zoom-out takes
 const SEG = PL + RL;
 const END = 4 * SEG + PL;   // end of the trillion plateau
 const OUTRO = 0.9;
@@ -140,172 +140,97 @@ const UNITS = [
   },
 ];
 
-/* ---------------- geometry ----------------
-   level 0 = a dot. level k = a grid of 1000 level-(k-1) items.
-   Grids alternate 40x25 / 25x40 so every level stays screen-shaped. */
-const GAP = 0.06;
-let geo = [];
-let FLAT = [];
-let portrait = false;
-
-function orderFor(a, b) {
-  const cells = [];
-  for (let j = 0; j < b; j++) for (let i = 0; i < a; i++) {
-    cells.push({ i, j, t: Math.max((i + 1) / a, (j + 1) / b), d: i / a + j / b });
-  }
-  cells.sort((p, q) => (p.t - q.t) || (p.d - q.d));
-  const cols = [0], rows = [0], full = [0];
-  let mc = 0, mr = 0;
-  for (const c of cells) {
-    mc = Math.max(mc, c.i + 1); mr = Math.max(mr, c.j + 1);
-    cols.push(mc); rows.push(mr);
-    const k = cols.length - 1;
-    full.push(mc * mr === k ? k : full[k - 1]);
-  }
-  return { order: cells, cols, rows, full };
-}
-
-const DOT = 0.84;
-function buildGeo() {
-  geo = [{ w: DOT, h: DOT, px: 1, py: 1 }];
-  FLAT = [Math.PI * DOT * DOT / 4];
-  for (let k = 1; k <= 4; k++) {
-    const wide = portrait ? (k % 2 === 0) : (k % 2 === 1);
-    const a = wide ? 40 : 25, b = wide ? 25 : 40;
-    const c = geo[k - 1];
-    const w = a * c.px - (c.px - c.w);
-    const h = b * c.py - (c.py - c.h);
-    const o = orderFor(a, b);
-    geo.push({ a, b, w, h, px: w * (1 + GAP), py: h * (1 + GAP), order: o.order, cols: o.cols, rows: o.rows, full: o.full });
-    FLAT.push(FLAT[k - 1] * (1000 * c.px * c.py) / (geo[k].px * geo[k].py));
-  }
-  cache.clear();
-}
-
-/* ---------------- render ---------------- */
-const cache = new Map();
-const LN_B = Math.log(1.04);
+/* ---------------- render ----------------
+   One flat field of dots. As the count grows the dots simply get smaller.
+   The field is painted with a repeating dot tile (a canvas pattern), so a
+   trillion dots cost the same as a thousand. Below ~2 device pixels per dot
+   the field becomes a flat fill at the dots' average brightness. */
+const DOT = 0.84;                              // dot diameter as a fraction of its cell
+const COVER = Math.PI * DOT * DOT / 4;         // how much of a cell a dot covers
+const FLAT_AT = 1.25;                          // device px per dot below which we stop drawing dots
+const tiles = new Map();
 let accentCol = '#4DE4B2';
 
-function cached(level, wdev, isA) {
-  const b = Math.round(Math.log(wdev) / LN_B);
-  const key = level + '|' + b + '|' + (isA ? accentCol : 'w');
-  let img = cache.get(key);
-  if (img) return img;
-  const g = geo[level];
-  const sc = Math.exp(b * LN_B) / g.w;
+function tile(pDev, color) {
+  const K = clamp(Math.ceil(96 / pDev), 1, 64);            // dots per tile edge
+  const size = Math.max(1, Math.round(K * pDev));           // tile edge in device px
+  const key = size + '|' + K + '|' + color;
+  let t = tiles.get(key);
+  if (t) return t;
   const cv = document.createElement('canvas');
-  cv.width = Math.max(1, Math.ceil(g.w * sc));
-  cv.height = Math.max(1, Math.ceil(g.h * sc));
-  drawBlock(cv.getContext('2d'), level, POW[level], isA ? POW[level] : 0, 0, 0, sc, 1);
-  cache.set(key, cv);
-  if (cache.size > 400) cache.delete(cache.keys().next().value);
-  return cv;
+  cv.width = cv.height = size;
+  const c = cv.getContext('2d');
+  const pp = size / K, r = pp * DOT / 2;
+  c.fillStyle = color;
+  c.beginPath();
+  for (let j = 0; j < K; j++) for (let i = 0; i < K; i++) {
+    const x = (i + 0.5) * pp, y = (j + 0.5) * pp;
+    c.moveTo(x + r, y); c.arc(x, y, r, 0, TAU);
+  }
+  c.fill();
+  t = { pattern: ctx.createPattern(cv, 'repeat'), pitch: pp };
+  tiles.set(key, t);
+  if (tiles.size > 80) tiles.delete(tiles.keys().next().value);
+  return t;
 }
 
-/* When the children of a block are smaller than ~2px we stop drawing them one
-   by one (sub-pixel rects alias into stripes) and fill the shape they cover:
-   the completed inner rectangle plus a partially-filled ring around it. */
-function drawUnion(c, g, cg, n, color, alpha, x, y, s) {
-  const cpx = cg.px * s, cpy = cg.py * s, gx = cpx - cg.w * s, gy = cpy - cg.h * s;
-  const k = Math.min(1000, Math.ceil(n));
-  const kf = g.full[k];
-  const ci = g.cols[kf], ri = g.rows[kf], cb = g.cols[k], rb = g.rows[k];
-  c.fillStyle = color;
-  if (kf > 0) { c.globalAlpha = alpha; c.fillRect(x, y, ci * cpx - gx, ri * cpy - gy); }
-  const ring = cb * rb - kf;
-  if (ring > 0 && n > kf) {
-    c.globalAlpha = alpha * Math.min(1, (n - kf) / ring);
-    if (cb > ci) c.fillRect(x + ci * cpx, y, (cb - ci) * cpx - gx, rb * cpy - gy);
-    if (rb > ri) c.fillRect(x, y + ri * cpy, ci * cpx - gx, (rb - ri) * cpy - gy);
-  }
+/* the first n dots of a grid `cols` wide: full rows plus a partial last row */
+function fillShape(c, n, cols, p, style, alpha) {
+  const full = Math.floor(n / cols), rem = n - full * cols;
+  c.fillStyle = style;
+  c.globalAlpha = alpha;
+  if (full > 0) c.fillRect(0, 0, cols * p, full * p);
+  if (rem > 0) c.fillRect(0, full * p, rem * p, p);
   c.globalAlpha = 1;
 }
 
-function drawBlock(c, level, count, acc, x, y, s, dpr) {
-  const g = geo[level];
-  if (level === 0) {
-    c.fillStyle = acc >= 1 ? accentCol : WHITE;
-    if (s < 2) { c.globalAlpha = FLAT[0]; c.fillRect(x, y, s, s); c.globalAlpha = 1; }
-    else { c.beginPath(); c.arc(x + s / 2, y + s / 2, s * DOT / 2, 0, TAU); c.fill(); }
-    return;
-  }
-  const cg = geo[level - 1], unit = POW[level - 1];
-  const cpx = cg.px * s, cpy = cg.py * s, cw = cg.w * s, ch = cg.h * s;
-  if (cpx < 2 || cpy < 2) {
-    const n = count / unit, na = clamp(acc, 0, count) / unit;
-    // lift the brightness of far-away fills a little; ramps in from 2px so nothing pops
-    const A = Math.min(1, FLAT[level - 1] * (1 + 0.45 * clamp((2 - Math.min(cpx, cpy)) / 1.5, 0, 1)));
-    if (na >= n) drawUnion(c, g, cg, n, accentCol, A, x, y, s);
-    else {
-      drawUnion(c, g, cg, n, WHITE, A, x, y, s);
-      if (na > 0) {
-        c.globalCompositeOperation = 'destination-out';
-        drawUnion(c, g, cg, na, '#000', 1, x, y, s);
-        c.globalCompositeOperation = 'source-over';
-        drawUnion(c, g, cg, na, accentCol, A, x, y, s);
-      }
-    }
-    return;
-  }
-  const f = Math.floor(count / unit), rem = count - f * unit;
-  const dots = level === 1;
-  const ord = g.order;
-  let pathA = null, pathW = null;
-  for (let i = 0; i < f; i++) {
-    const o = ord[i];
-    const cx = x + o.i * cpx, cy = y + o.j * cpy;
-    const lo = i * unit;
-    let isA;
-    if (lo + unit <= acc) isA = true;
-    else if (lo >= acc) isA = false;
-    else { drawBlock(c, level - 1, unit, acc - lo, cx, cy, s, dpr); continue; }
-    if (dots) {
-      const p = isA ? (pathA || (pathA = new Path2D())) : (pathW || (pathW = new Path2D()));
-      p.moveTo(cx + cw, cy + ch / 2); p.arc(cx + cw / 2, cy + ch / 2, cw / 2, 0, TAU);
-    } else {
-      c.drawImage(cached(level - 1, cw * dpr, isA), cx, cy, cw, ch);
-    }
-  }
-  if (pathW) { c.fillStyle = WHITE; c.fill(pathW); }
-  if (pathA) { c.fillStyle = accentCol; c.fill(pathA); }
-  if (rem > 0) {
-    const o = ord[f];
-    drawBlock(c, level - 1, rem, clamp(acc - f * unit, 0, rem), x + o.i * cpx, y + o.j * cpy, s, dpr);
-  }
-}
-
-function levelFor(N) { return N <= 1e3 ? 1 : N <= 1e6 ? 2 : N <= 1e9 ? 3 : 4; }
-
-function camera(N, W, H) {
-  const L = levelFor(N);
-  const g = geo[L], cg = geo[L - 1];
-  const n = N / POW[L - 1];
-  const k0 = Math.floor(n), k1 = Math.min(1000, k0 + 1), fr = n - k0;
-  const cols = lerp(g.cols[k0], g.cols[k1], fr);
-  const rows = lerp(g.rows[k0], g.rows[k1], fr);
-  const ew = cols * cg.px - (cg.px - cg.w);
-  const eh = rows * cg.py - (cg.py - cg.h);
-  const sMax = 0.15 * Math.min(W, H);
-  const s = Math.min(0.84 * W / ew, field.h / eh, sMax);
-  return { L, s, ox: W / 2 - ew / 2 * s, oy: field.cy - eh / 2 * s };
-}
-
-let W = 0, H = 0, dpr = 1, dbgLock = false;
-const field = { cy: 0, h: 0 };
+let W = 0, H = 0, dpr = 1, dbgLock = false, dbgScreens = 0;
+const field = { cy: 0, h: 0, w: 0 };
 function measureField() {
-  const top = els.hud.getBoundingClientRect().bottom + H * 0.035;
-  const bottom = H - Math.max(H * 0.09, 56) - 84;
+  const top = els.hud.getBoundingClientRect().bottom + H * 0.025;
+  const bottom = H - Math.max(H * 0.09, 56) - 72;
   field.cy = (top + bottom) / 2;
   field.h = Math.max(80, (bottom - top) * 0.96);
+  field.w = Math.min(W * 0.84, field.h * 2.4);                  // never a thin wide strip
 }
+
 function render(N, acc) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
-  const cam = camera(N, W, H);
-  drawBlock(ctx, cam.L, N, acc, cam.ox, cam.oy, cam.s, dpr);
+
+  const A = field.w / field.h;                                   // field aspect
+  const pMax = 0.15 * Math.min(W, H);                            // a single dot never grows past this
+  let p = Math.min(Math.sqrt(field.w * field.h / N), pMax);      // cell pitch in css px
+  const flat = p * dpr < FLAT_AT;
+  let tw = null, ta = null;
+  if (!flat) {
+    tw = tile(p * dpr, WHITE);
+    p = tw.pitch / dpr;                                          // snap to what the tile can repeat exactly
+    if (acc > 0) ta = tile(p * dpr, accentCol);
+  }
+  const cols = Math.max(1, Math.ceil(Math.sqrt(N * A)));
+  const cw = Math.min(N, Math.sqrt(N * A)) * p;                  // continuous extent, keeps centering smooth
+  const ch = Math.max(1, Math.sqrt(N / A)) * p;
+  ctx.translate(W / 2 - cw / 2, field.cy - ch / 2);
+
+  if (flat) {
+    const lift = 1 + 0.45 * clamp((FLAT_AT - p * dpr) / 1.0, 0, 1); // far-away fields get a little brighter
+    const a = Math.min(1, COVER * lift);
+    fillShape(ctx, N, cols, p, WHITE, a);
+    if (acc > 0) {
+      const ac = Math.max(1, Math.ceil(Math.sqrt(acc * A)));
+      ctx.globalCompositeOperation = 'destination-out';
+      fillShape(ctx, acc, ac, p, '#000', 1);
+      ctx.globalCompositeOperation = 'source-over';
+      fillShape(ctx, acc, ac, p, accentCol, a);
+    }
+  } else {
+    fillShape(ctx, N, cols, p, tw.pattern, 1);
+    if (acc > 0) fillShape(ctx, acc, Math.max(1, Math.ceil(Math.sqrt(acc * A))), p, ta.pattern, 1);
+  }
 }
+
 
 /* ---------------- timeline ---------------- */
 function timeline(y) {
@@ -401,8 +326,9 @@ function updateHud(st) {
 function frame(t) {
   const dt = Math.min(0.05, (t - lastT) / 1000 || 0.016);
   lastT = t;
-  const k = reduced ? 1 : 1 - Math.exp(-dt * 6.5);
+  const k = reduced ? 1 : 1 - Math.exp(-dt * 5.5);
   smoothY += (targetY - smoothY) * k;
+  if (dbgLock) smoothY = targetY;
   if (Math.abs(targetY - smoothY) < 0.05) smoothY = targetY;
   let busy = smoothY !== targetY;
   if (accT < 1) { accT = Math.min(1, accT + dt / 0.6); setAccent(); busy = true; }
@@ -417,11 +343,9 @@ function resize() {
   W = window.innerWidth; H = window.innerHeight; vh = H;
   dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-  const p = H > W;
-  if (p !== portrait || !geo.length) { portrait = p; buildGeo(); }
   els.track.style.height = ((END + OUTRO + 1) * vh) + 'px';
   measureField();
-  if (!dbgLock) targetY = window.scrollY;
+  targetY = dbgLock ? (smoothY = dbgScreens * vh) : window.scrollY;
   wake();
 }
 
@@ -457,10 +381,10 @@ accFrom = accTo = hex(first.accent); accT = 1; setAccent();
 setUnit(first.id);
 resize();
 const dbgY = new URLSearchParams(location.search).get('y');
-if (dbgY) { dbgLock = true; targetY = smoothY = parseFloat(dbgY) * vh; wake(); }
+if (dbgY) { dbgLock = true; dbgScreens = parseFloat(dbgY); targetY = smoothY = dbgScreens * vh; wake(); }
 
 /* debug: window.__abd.jump(screens) renders a scroll position immediately */
 window.__abd = {
-  jump(y) { targetY = smoothY = y * vh; window.scrollTo(0, targetY); const st = timeline(y); const t0 = performance.now(); render(st.N, st.acc); updateHud(st); return { N: st.N, acc: st.acc, ms: Math.round((performance.now() - t0) * 100) / 100, cache: cache.size }; },
+  jump(y) { targetY = smoothY = y * vh; window.scrollTo(0, targetY); const st = timeline(y); const t0 = performance.now(); render(st.N, st.acc); updateHud(st); return { N: st.N, acc: st.acc, ms: Math.round((performance.now() - t0) * 100) / 100, tiles: tiles.size }; },
 };
 })();
