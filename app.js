@@ -154,7 +154,7 @@ let accentCol = '#4DE4B2';
 function tile(pDev, color) {
   const K = clamp(Math.ceil(96 / pDev), 1, 64);            // dots per tile edge
   const size = Math.max(1, Math.round(K * pDev));           // tile edge in device px
-  const key = size + '|' + K + '|' + color;
+  const key = size + '|' + K + '|' + color + '|' + dpr;
   let t = tiles.get(key);
   if (t) return t;
   const cv = document.createElement('canvas');
@@ -168,7 +168,10 @@ function tile(pDev, color) {
     c.moveTo(x + r, y); c.arc(x, y, r, 0, TAU);
   }
   c.fill();
-  t = { pattern: ctx.createPattern(cv, 'repeat'), pitch: pp };
+  const pattern = ctx.createPattern(cv, 'repeat');
+  // the tile is in device pixels but patterns repeat in css pixels: scale it back down
+  pattern.setTransform(new DOMMatrix([1 / dpr, 0, 0, 1 / dpr, 0, 0]));
+  t = { pattern, pitch: pp };
   tiles.set(key, t);
   if (tiles.size > 80) tiles.delete(tiles.keys().next().value);
   return t;
